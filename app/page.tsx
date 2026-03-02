@@ -1,17 +1,40 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { signInWithPopup } from 'firebase/auth';
+import { useRouter } from 'next/navigation';
+import { auth, googleProvider, isAllowedEmail } from '@/lib/firebase';
+import { useAuth } from '@/components/Providers';
 import { Logo } from '@/components/Logo';
 
 export default function LandingPage() {
   const [scrolled, setScrolled] = useState(false);
+  const { user, loading, isAuthorized } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!loading && user && isAuthorized) {
+      router.push('/app');
+    }
+  }, [user, loading, isAuthorized, router]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20);
     window.addEventListener('scroll', onScroll);
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
+
+  async function handleGetStarted() {
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      if (!isAllowedEmail(result.user.email)) {
+        const email = result.user.email ?? '';
+        router.push(`/waitlist?email=${encodeURIComponent(email)}`);
+      }
+    } catch {
+      // User closed popup or cancelled — do nothing
+    }
+  }
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
@@ -28,12 +51,12 @@ export default function LandingPage() {
               beta
             </span>
           </div>
-          <Link
-            href="/app"
+          <button
+            onClick={handleGetStarted}
             className="text-sm px-4 py-2 rounded-lg bg-[#f3ff97] text-black font-medium hover:bg-[#e5f080] transition-colors"
           >
             Get Started
-          </Link>
+          </button>
         </div>
       </nav>
 
@@ -52,8 +75,8 @@ export default function LandingPage() {
           <p className="text-lg text-[#a0a0a0] max-w-xl mx-auto mb-10 leading-relaxed">
             AI-driven contract design with production-ready code, multi-view diagrams, and financial domain expertise — built for Canton.
           </p>
-          <Link
-            href="/app"
+          <button
+            onClick={handleGetStarted}
             className="inline-flex items-center gap-2 px-8 py-3.5 rounded-lg bg-[#f3ff97] text-black font-semibold text-base hover:bg-[#e5f080] transition-colors"
           >
             Get Started
@@ -71,7 +94,7 @@ export default function LandingPage() {
               <path d="M5 12h14" />
               <path d="m12 5 7 7-7 7" />
             </svg>
-          </Link>
+          </button>
         </div>
 
         {/* Scroll indicator */}
@@ -175,8 +198,8 @@ export default function LandingPage() {
           <p className="text-[#a0a0a0] mb-8">
             Start designing your Canton smart contracts with AI assistance.
           </p>
-          <Link
-            href="/app"
+          <button
+            onClick={handleGetStarted}
             className="inline-flex items-center gap-2 px-8 py-3.5 rounded-lg bg-[#f3ff97] text-black font-semibold hover:bg-[#e5f080] transition-colors"
           >
             Get Started
@@ -194,7 +217,7 @@ export default function LandingPage() {
               <path d="M5 12h14" />
               <path d="m12 5 7 7-7 7" />
             </svg>
-          </Link>
+          </button>
         </div>
       </section>
     </div>

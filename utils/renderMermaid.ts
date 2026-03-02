@@ -1,6 +1,7 @@
 import mermaid from 'mermaid';
 
 let initialized = false;
+let _renderCount = 0;
 
 type MermaidDiagramType = 'flowchart' | 'sequence' | 'er' | 'state' | 'class' | 'other';
 
@@ -38,9 +39,6 @@ function ensureInitialized() {
         clusterBorder: '#2a2a2a',
         titleColor: '#ffffff',
       },
-      flowchart: {
-        htmlLabels: true,
-      },
     });
     initialized = true;
   }
@@ -70,18 +68,10 @@ export function isLikelyCompleteMermaid(source: string): boolean {
   return true;
 }
 
-/** Normalize mermaid: graph TB/LR → flowchart TD/LR; only prepend flowchart init for flowchart diagrams. */
+/** Normalize mermaid: graph TB/LR → flowchart TD/LR. */
 function normalizeMermaidSource(source: string): string {
   let s = source.replace(/^(\s*)graph\s+(TB|TD|BT|LR|RL)\b/gim, '$1flowchart $2');
   s = s.replace(/\\n/g, '\n');
-
-  const diagramType = detectDiagramType(s);
-
-  // Only prepend flowchart init for flowchart diagrams
-  if (diagramType === 'flowchart' && !s.trimStart().startsWith('%%{init:')) {
-    s = '%%{init: {"flowchart": {"htmlLabels": true}}}%%\n' + s;
-  }
-
   return s;
 }
 
@@ -92,8 +82,6 @@ function sanitizeForMermaid11(source: string): string {
   // Only apply flowchart-specific sanitization to flowcharts
   if (diagramType === 'flowchart') {
     return source
-      .replace(/(\d+)\.(\s+)/g, '$1)$2')
-      .replace(/^(\s*-\s+)/gm, ' $1')
       .replace(/(\w+)\(([^()]*%[^()]*)\)/g, (_, id, label) =>
         `${id}["${label.replace(/"/g, '\\"')}"]`
       );
@@ -110,14 +98,17 @@ function isMermaidErrorSvg(svg: string): { isError: boolean; reason?: string } {
 
 function cleanupMermaidDom(): void {
   if (typeof document === 'undefined') return;
-  document.querySelectorAll('[id^="dmermaid-"], [id^="mermaid-"]').forEach((el) => el.remove());
+  // Only remove direct children of body — mermaid appends temp containers there.
+  // Do NOT use document.querySelectorAll which would also remove React-managed SVG elements.
+  document.body.querySelectorAll(':scope > [id^="dmermaid-"], :scope > [id^="mermaid-"]').forEach((el) => el.remove());
 }
 
 export async function renderMermaidToSvg(source: string): Promise<string | null> {
   if (!source?.trim()) return null;
   let normalized = normalizeMermaidSource(source.trim());
   normalized = sanitizeForMermaid11(normalized);
-  const id = 'mermaid-' + Date.now();
+  // Use a counter (not Date.now) to guarantee unique IDs across rapid concurrent calls.
+  const id = `mermaid-r${++_renderCount}`;
   try {
     ensureInitialized();
     const { svg } = await mermaid.render(id, normalized);
@@ -127,10 +118,10 @@ export async function renderMermaidToSvg(source: string): Promise<string | null>
     return svg;
   } catch {
     cleanupMermaidDom();
-    normalized = sanitizeForMermaid11(normalized);
+    // Retry with a fresh unique ID — do NOT re-sanitize (already done above).
     try {
       ensureInitialized();
-      const { svg } = await mermaid.render(id + '-retry', normalized);
+      const { svg } = await mermaid.render(`mermaid-r${++_renderCount}`, normalized);
       cleanupMermaidDom();
       if (isMermaidErrorSvg(svg).isError) return null;
       return svg;

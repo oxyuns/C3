@@ -20,12 +20,16 @@ export function DiagramPanel() {
     let cancelled = false;
     setError(null);
     renderMermaidToSvg(mermaidSource).then((result) => {
-      if (!cancelled) {
-        if (result) {
-          setSvg(result);
-        } else {
-          setError('Could not render diagram');
-        }
+      if (cancelled) return;
+      if (result) {
+        setSvg(result);
+        setError(null);
+      } else {
+        // Keep the previous SVG visible; only show error if there was no SVG before.
+        setSvg((prev) => {
+          if (!prev) setError('Could not render diagram');
+          return prev;
+        });
       }
     });
     return () => { cancelled = true; };

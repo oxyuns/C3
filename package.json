@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
+    "firebase": "^12.10.0",
     "jszip": "^3.10.1",
     "mermaid": "^11.12.2",
     "next": "^15.3.0",

@@ -96,6 +96,11 @@ DIAGRAM TYPE SELECTION — choose the best Mermaid type for the situation:
    - Contracts as rectangles: [Contract]
    - Contract fields as bullet list inside node using Markdown Strings: IOU["\`IOU\\n• amount: 10000000\\n• interest: 1%\`"]
    - Arrow direction: Party --|role|--> Contract
+   - NODE DEFINITION RULES (critical — violations cause duplicate nodes):
+     * Define every node EXACTLY ONCE using its shape notation (e.g. Alice((Alice)), IOU[IOU])
+     * Use the party name exactly as the node ID (e.g. Alice((Alice)) not A((Alice)))
+     * In edges, reference nodes by ID only — NEVER repeat shape notation: write Alice --> IOU, NOT Alice((Alice)) --> IOU[IOU]
+     * Node IDs are case-sensitive: always use the same capitalisation (e.g. always Alice, never alice)
    - Use subgraph blocks to group related contracts/parties when 3+ templates exist:
      subgraph Collateral Management
        CollateralIOU[...]
