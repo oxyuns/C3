@@ -1,17 +1,17 @@
 {
   "name": "canton-contract-catalyst",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "main": "out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "preview": "electron-vite preview"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
   },
   "dependencies": {
-    "dotenv": "^17.3.1",
+    "@anthropic-ai/sdk": "^0.78.0",
     "jszip": "^3.10.1",
     "mermaid": "^11.12.2",
+    "next": "^15.3.0",
     "openai": "^6.22.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -21,15 +21,12 @@
   },
   "devDependencies": {
     "@tailwindcss/typography": "^0.5.19",
+    "@types/node": "^20.19.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^4.3.3",
     "autoprefixer": "^10.4.20",
-    "electron": "^33.2.0",
-    "electron-vite": "^2.3.0",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.15",
-    "typescript": "^5.6.3",
-    "vite": "^5.4.11"
+    "typescript": "^5.6.3"
   }
 }

@@ -1,8 +1,10 @@
 node_modules
 out
 dist
+.next
 *.log
 .DS_Store
 .env
 .env.local
+.claude
 packages/excalidraw-mcp/node_modules

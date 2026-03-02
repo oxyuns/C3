@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: #0a0a0a;
+  color: #ffffff;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Dark scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0a0a;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2a2a;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3a3a;
+}
+
+/* Prose dark overrides for markdown */
+.prose-dark {
+  --tw-prose-body: #ffffff;
+  --tw-prose-headings: #ffffff;
+  --tw-prose-lead: #a0a0a0;
+  --tw-prose-links: #f3ff97;
+  --tw-prose-bold: #ffffff;
+  --tw-prose-counters: #a0a0a0;
+  --tw-prose-bullets: #666666;
+  --tw-prose-hr: #2a2a2a;
+  --tw-prose-quotes: #a0a0a0;
+  --tw-prose-quote-borders: #2a2a2a;
+  --tw-prose-captions: #666666;
+  --tw-prose-code: #f3ff97;
+  --tw-prose-pre-code: #a0a0a0;
+  --tw-prose-pre-bg: #141414;
+  --tw-prose-th-borders: #2a2a2a;
+  --tw-prose-td-borders: #1a1a1a;
+}
+
+/* Selection */
+::selection {
+  background: rgba(243, 255, 151, 0.25);
+  color: #ffffff;
+}
