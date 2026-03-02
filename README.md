@@ -1,65 +1,55 @@
-# Canton Contract Catalyst
+# C3 — Canton Contract Catalyst
 
-An Electron desktop app for designing DAML financial contracts with AI assistance. Features a Cursor-style split-panel UI.
+AI-powered DAML smart contract design tool built for the Canton network.
 
 ## Features
 
-- **Workspace**: Cursor-style folder selection
-- **AI Chat**: Collaborate on DAML contract design via OpenAI API
-- **Multi-choice Options**: `suggest_options` tool for guided workflow selection
-- **Mermaid Diagrams**: Live architecture diagrams rendered in the split panel
-- **Excalidraw MCP**: Architecture diagram editing via MCP server
-- **Export**: Download DAML codebase + `diagram.excalidraw.json` as a ZIP
+- **AI-Powered Design** — Describe contract requirements in plain language. The AI architects complete DAML solutions through iterative conversation.
+- **Production-Ready Codebase** — Get complete DAML project files (templates, choices, test scenarios, daml.yaml). Export as ZIP and deploy directly.
+- **Multi-View Diagrams** — Auto-generated flowcharts, sequence diagrams, ER diagrams, and state diagrams that evolve with your design.
+- **Financial Domain Intelligence** — Optimized for financial contracts with built-in knowledge of global regulatory frameworks, financial instruments, and industry standards.
+- **Model Selection** — Choose between OpenAI (GPT-4o, GPT-4o Mini) and Anthropic (Claude Sonnet 4, Claude 3.7 Sonnet) models.
 
-## Requirements
+## Tech Stack
 
-- Node.js 18+
-- pnpm
-- OpenAI API key
+- **Framework**: Next.js 15 (App Router)
+- **AI**: OpenAI SDK, Anthropic SDK
+- **State**: Zustand
+- **Diagrams**: Mermaid
+- **Styling**: Tailwind CSS
+- **Export**: JSZip
 
-## Installation
+## Getting Started
 
 ```bash
 pnpm install
 ```
 
-If you encounter Electron binary errors:
-```bash
-cd node_modules/.pnpm/electron@*/node_modules/electron && node install.js
+Create `.env.local`:
+
+```
+OPENAI_API_KEY=your_openai_key
+ANTHROPIC_API_KEY=your_anthropic_key
 ```
 
-## Development
+Run the dev server:
 
 ```bash
 pnpm dev
 ```
 
-## Build
-
-```bash
-pnpm build
-```
-
-## Usage
-
-1. **Open Folder**: Select the workspace folder for your DAML project
-2. **API Key**: Enter your OpenAI API key in the header and save
-3. **Chat**: Type a message or click option buttons to start designing contracts
-4. **Export**: Click Export (top-right) to download your DAML codebase as a ZIP
+Open [http://localhost:3000](http://localhost:3000).
 
 ## Project Structure
 
 ```
-src/
-├── main/           # Electron main process
-│   ├── agent/      # AI agent (OpenAI, tools)
-│   └── export.ts   # ZIP export
-├── preload/        # Preload IPC bridge
-└── renderer/       # React UI
-    └── src/
-        ├── components/
-        ├── store/
-        └── styles/
-packages/
-└── excalidraw-mcp/ # Excalidraw MCP server subpackage
+app/            # Next.js pages and API routes
+components/     # React UI components
+lib/            # AI agent, export, workspace logic
+store/          # Zustand state stores
+utils/          # Mermaid rendering utilities
 ```
+
+## License
+
+Private
