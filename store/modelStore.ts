@@ -16,7 +16,7 @@ interface ModelState {
 
 export const useModelStore = create<ModelState>((set) => ({
   models: [],
-  selectedModelId: 'gpt-4o',
+  selectedModelId: 'claude-opus-4-6',
   setSelectedModelId: (id) => set({ selectedModelId: id }),
   fetchModels: async () => {
     try {

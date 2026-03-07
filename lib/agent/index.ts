@@ -1,7 +1,10 @@
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
+import { tavily } from '@tavily/core';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { buildSystemPrompt } from './prompts';
+import { routeSections } from './router';
 
 export type ModelProvider = 'openai' | 'anthropic';
 export type ModelId = 'gpt-4o' | 'gpt-4o-mini' | 'claude-sonnet-4-20250514' | 'claude-3-7-sonnet-20250219';
@@ -52,131 +55,13 @@ export interface AgentResponse {
   formFields?: FormField[];
 }
 
-function createSystemPrompt(workspacePath: string): string {
-  return `LANGUAGE: ALL output MUST be in English. NEVER use Korean or any other language. Even if the user writes in Korean, respond in English. Chat, diagrams, options, forms — English ONLY.
+/** Maximum characters for a tool result before truncation. */
+const MAX_TOOL_RESULT_CHARS = 3000;
 
-You are an AI assistant helping users design and implement DAML financial contracts for Canton network.
-Workspace: ${workspacePath}
-Tools: read_file, write_file, list_files, request_form, suggest_options, show_diagram.
-
-=== DAML implementation (full workflow) ===
-Implement the full workflow the user describes — not just a data type or example. When the user specifies conditions, actions, or roles (e.g. "creditor B can call for margin", "custodian C may liquidate after 48 hours", "proceeds first to B then to A"), implement them in DAML:
-- Use template with signatories and observers for all parties involved. Every party the user names (debtor, creditor, custodian, etc.) must appear in the contract.
-- Implement each action the user describes as a choice with the correct controller (the party who may exercise it). Examples: margin call by creditor, top-up or repay by debtor, liquidate by custodian.
-- Model time conditions (e.g. "within 48 hours") in contract state (e.g. marginCallDeadline : Time) and enforce them in choice preconditions or in the choice body.
-- Model distribution rules (e.g. "proceeds first to creditor, remainder to debtor") in the choice that performs liquidation — create the appropriate payoff or archive contracts.
-Do not output only a record type and an example instantiation. Output a complete, executable contract: template with all fields and parties, and choices that implement every described action and condition.
-Write each DAML module to a single file path (e.g. src/ModuleName.daml); do not create the same module in both the workspace root and src/. For each contract type use exactly one canonical module (e.g. only src/CollateralizedIOU.daml for the full implementation); do not create a second file with a similar name (e.g. CollateralIOU.daml) that only has types or an example, to avoid redundant files in export.
-- Buildable project: For every DAML design, ensure the workspace has a daml.yaml at the project root with at least name, version, sdk-version, and source (e.g. "." or "src"). If daml.yaml is missing, create it with the first write_file when creating the first contract.
-- Entrypoint: Provide a Main.daml (or a single entrypoint module) that creates the initial contract instance so the project can be built and run. If the design has a main template (e.g. CollateralizedIOU), Main.daml should contain a script or a top-level binding that creates one example contract.
-- Multiple modules when the spec is complex: If the user's spec has several distinct flows or concerns (e.g. request vs active contract, or payoff/settlement), split into multiple modules (e.g. CollateralIOU.daml for the main template and choices, Util.daml for shared types or helpers, Main.daml for the entrypoint). Follow Canton-style layout: one primary contract module, optional util, and Main as entrypoint.
-- relatedPaths: When you write multiple files (daml.yaml, Main.daml, src/CollateralIOU.daml, etc.), pass all of these paths in show_diagram's relatedPaths so export includes the full project.
-- Prefer Canton-style layout: daml.yaml at root; DAML modules under src/ or daml/; use Propose/Accept or similar patterns when two parties must agree before creating a contract.
-
-=== request_form (use only when params are missing) ===
-Use request_form ONLY when required contract parameters are missing or ambiguous. If the user's message already specifies parties (e.g. "debtor A, creditor B, custodian C") or terms (LTV, margin call, 48 hours, liquidation order), extract and use that information and proceed directly with write_file and show_diagram — do NOT call request_form. Example: "Implement a collateralized IOU with three parties: debtor A, creditor B, and custodian C. If the collateral value falls below LTV, creditor B can call for margin; if debtor A does not top up within 48 hours, custodian C may liquidate; proceeds first to B then remainder to A" → do NOT call request_form; use debtor A, creditor B, custodian C and the described terms; call write_file then show_diagram.
-CRITICAL (pre-fill): When you DO call request_form, you MUST pass defaultValue for every field that the user has already specified in their message. Never show an empty form when the user gave values — the form must be pre-filled so the user only clicks Submit. Example: user said "debtor A, creditor B, custodian C" → include {id:"debtor",label:"Debtor",defaultValue:"A"}, {id:"creditor",label:"Creditor",defaultValue:"B"}, {id:"custodian",label:"Custodian",defaultValue:"C"}. For any party, amount, or term the user mentioned, set that field's defaultValue so the form is already filled.
-- IOU fields: customer, lender, amount; optional interest, repayment. Collateral IOU: debtor, creditor, amount, collateral (and custodian if three-party). DvP: seller, buyer, asset, price.
-- NEVER write numbered lists like "1. Customer 2. Lender" in text; use request_form only when you need more params and always pre-fill with defaultValue from the user message.
-- CRITICAL (FORM_SUBMITTED): When the user sends "[FORM_SUBMITTED] {\\"customer\\":\\"X\\",\\"lender\\":\\"Y\\",\\"amount\\":\\"10\\",...}" that is the SUBMITTED form data (JSON). If a field value is the literal string "(empty)" or blank, treat it as omitted (optional left empty). Optional fields that are omitted: do NOT require them, do NOT validate them as numbers, and when writing DAML omit them or use template default. Only validate required fields and any optional field that was actually provided (non-empty, not "(empty)").
-Required vs optional by contract type: IOU — required: customer, lender, amount; optional: interest, repayment. Collateral IOU — required: debtor, creditor, amount, collateral. DvP — required: seller, buyer, asset, price (or equivalent; add optional fields with optional:true when calling request_form).
-Validation rules: (1) Required fields must be present and non-empty. (2) Only required numeric fields and optional fields that were provided (not omitted) must be sensible numbers (non-negative, numeric). (3) For IOU, if repayment is provided it must be consistent with amount; if interest is provided, same logic. (4) If validation FAILS: explain clearly from a DAML contract design perspective, then call request_form again. Do NOT call write_file or show_diagram until the data is valid. If validation PASSES: proceed with write_file and show_diagram (with relatedPaths). Never put user-submitted values in placeholder — placeholder is for hints only (e.g. "e.g. Alice").
-
-=== suggest_options ===
-- Single-choice only (1-3 options): use suggest_options. E.g. "Choose type" → [IOU, DvP, Direct input].
-- For multiple fields, use request_form instead.
-
-=== MERMAID DIAGRAMS (MANDATORY + MULTI-TYPE) ===
-The diagram MUST show the COMPLETE architecture of EVERYTHING designed in this conversation. When you add a new contract, include ALL previously created contracts and parties in the diagram. Never show only the latest addition — always the full cumulative design.
-
-DIAGRAM TYPE SELECTION — choose the best Mermaid type for the situation:
-
-1. flowchart LR (default) — Party / Contract relationship overview
-   - Parties as circles: ((Party Name))
-   - Contracts as rectangles: [Contract]
-   - Contract fields as bullet list inside node using Markdown Strings: IOU["\`IOU\\n• amount: 10000000\\n• interest: 1%\`"]
-   - Arrow direction: Party --|role|--> Contract
-   - NODE DEFINITION RULES (critical — violations cause duplicate nodes):
-     * Define every node EXACTLY ONCE using its shape notation (e.g. Alice((Alice)), IOU[IOU])
-     * Use the party name exactly as the node ID (e.g. Alice((Alice)) not A((Alice)))
-     * In edges, reference nodes by ID only — NEVER repeat shape notation: write Alice --> IOU, NOT Alice((Alice)) --> IOU[IOU]
-     * Node IDs are case-sensitive: always use the same capitalisation (e.g. always Alice, never alice)
-   - Use subgraph blocks to group related contracts/parties when 3+ templates exist:
-     subgraph Collateral Management
-       CollateralIOU[...]
-       MarginCall[...]
-     end
-   - REQUIRED for every DAML design response
-
-2. sequenceDiagram — Contract lifecycle & choice execution flow
-   - Use when the design has multi-step workflows, choice chains, or party interactions over time
-   - Map each DAML choice to a message arrow between participants
-   - Show propose/accept, exercise, archive sequences
-   - Example:
-     sequenceDiagram
-       participant D as Debtor
-       participant C as Creditor
-       participant Cu as Custodian
-       D->>C: Propose CollateralIOU
-       C->>D: Accept
-       C->>D: MarginCall
-       alt Top-up within 48h
-         D->>C: TopUp(amount)
-       else Deadline passes
-         Cu->>C: Liquidate
-         Cu->>D: Return remainder
-       end
-   - RECOMMENDED for complex contracts with 2+ choices or conditional flows
-
-3. erDiagram — Data model & template field relationships
-   - Use when the design has multiple related templates or complex data structures
-   - Show template fields, types, and relationships between templates
-   - Example:
-     erDiagram
-       CollateralIOU {
-         Party debtor
-         Party creditor
-         Decimal amount
-         Decimal collateralValue
-         Decimal ltvThreshold
-       }
-       MarginCallRequest {
-         ContractId collateralIOU
-         Time deadline
-       }
-       CollateralIOU ||--o{ MarginCallRequest : triggers
-   - RECOMMENDED when 3+ templates with cross-references
-
-4. stateDiagram-v2 — Contract state transitions
-   - Use when a contract has distinct lifecycle states
-   - Example:
-     stateDiagram-v2
-       [*] --> Proposed
-       Proposed --> Active: Accept
-       Active --> MarginCalled: MarginCall
-       MarginCalled --> Active: TopUp
-       MarginCalled --> Liquidated: Liquidate (timeout)
-       Active --> Settled: Repay
-       Settled --> [*]
-   - RECOMMENDED when state machine behavior is central to the design
-
-WHEN TO USE WHICH:
-- Simple (1-2 templates, few choices): flowchart LR only
-- Medium (2-3 templates, multiple choices): flowchart LR with subgraphs + sequenceDiagram for lifecycle
-- Complex (4+ templates, conditional flows, state machines): flowchart with subgraphs + sequenceDiagram + stateDiagram or erDiagram
-
-You may call show_diagram MULTIPLE TIMES in one turn to show different views (e.g. architecture flowchart + lifecycle sequence). Each call replaces the previous diagram, so combine multiple diagrams into one when possible. If you must show multiple views, prefer using one combined flowchart with subgraphs.
-
-GENERAL DIAGRAM RULES:
-- For EVERY response about DAML contracts, you MUST call show_diagram with mermaid source and relatedPaths
-- relatedPaths: array of workspace-relative DAML file paths (e.g. ["Main.daml", "src/IOU.daml"]) — only these are included in export
-- NEVER write placeholder text like "diagram will appear here" — always output actual mermaid via show_diagram
-- After write_file, call show_diagram in the SAME turn
-- Wrap labels with special chars (e.g. %) in quotes
-- English only. In node labels avoid "1." or "2." and leading "- " to prevent Mermaid syntax errors
-- Keep chat text SHORT. Always add "Direct input" as last option in suggest_options.
-
-Use read_file/write_file/list_files for workspace.`;
+function truncateResult(result: unknown): string {
+  const str = JSON.stringify(result);
+  if (str.length <= MAX_TOOL_RESULT_CHARS) return str;
+  return str.slice(0, MAX_TOOL_RESULT_CHARS) + '\n...[truncated]';
 }
 
 function hasMermaidBlock(s: string): boolean {
@@ -297,6 +182,20 @@ const OPENAI_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'web_search',
+      description: 'Search the web for up-to-date information about financial instruments, regulations, contract structures, DAML patterns, or any topic the user asks about. Use when your training data may be outdated or when the user asks about specific jurisdictions, regulations, or niche financial products.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Search query' },
+        },
+        required: ['query'],
+      },
+    },
+  },
 ];
 
 export async function createAgent(
@@ -374,6 +273,20 @@ export async function createAgent(
       }
       return { tool: name, result: { success: true } };
     }
+    if (name === 'web_search') {
+      const query = String(args.query ?? '').trim();
+      if (!query) return { tool: name, result: { error: 'Empty query' } };
+      const tavilyApiKey = process.env.TAVILY_API_KEY;
+      if (!tavilyApiKey) return { tool: name, result: { error: 'TAVILY_API_KEY not configured' } };
+      const tvly = tavily({ apiKey: tavilyApiKey });
+      const response = await tvly.search(query, { maxResults: 5 });
+      const results = response.results.map((r) => ({
+        title: r.title,
+        url: r.url,
+        content: r.content,
+      }));
+      return { tool: name, result: results };
+    }
     return { tool: name, result: { error: 'Unknown tool' } };
   }
 
@@ -388,7 +301,8 @@ export async function createAgent(
 
   // --- OpenAI runner ---
   async function runOpenAI(messages: AgentMessage[]): Promise<AgentResponse> {
-    const systemPrompt = createSystemPrompt(workspacePath);
+    const selectedSections = await routeSections(messages, 'openai', apiKey);
+    const systemPrompt = await buildSystemPrompt(workspacePath, selectedSections);
     let lastContent = '';
     const toolResults: ToolCallResult[] = [];
 
@@ -446,7 +360,7 @@ export async function createAgent(
         openaiMessages.push({
           role: 'tool',
           tool_call_id: tc.id,
-          content: JSON.stringify(result.result),
+          content: truncateResult(result.result),
         });
       }
 
@@ -466,7 +380,8 @@ export async function createAgent(
 
   // --- Anthropic runner ---
   async function runAnthropic(messages: AgentMessage[]): Promise<AgentResponse> {
-    const systemPrompt = createSystemPrompt(workspacePath);
+    const selectedSections = await routeSections(messages, 'anthropic', apiKey);
+    const systemPrompt = await buildSystemPrompt(workspacePath, selectedSections);
     let lastContent = '';
     const toolResults: ToolCallResult[] = [];
 
@@ -528,7 +443,7 @@ export async function createAgent(
         toolResultBlocks.push({
           type: 'tool_result',
           tool_use_id: tu.id,
-          content: JSON.stringify(result.result),
+          content: truncateResult(result.result),
         });
       }
       anthropicMessages.push({ role: 'user', content: toolResultBlocks });
