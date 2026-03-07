@@ -9,7 +9,7 @@ import { useModelStore } from '@/store/modelStore';
 import { extractMermaidBlocks, extractPartialMermaidBlocks } from '@/utils/renderMermaid';
 import type { FormField } from '@/store/chatStore';
 
-function GeneratingDots() {
+function AnimatedDots({ text }: { text: string }) {
   const [dots, setDots] = useState('');
   useEffect(() => {
     const id = setInterval(() => {
@@ -17,7 +17,7 @@ function GeneratingDots() {
     }, 400);
     return () => clearInterval(id);
   }, []);
-  return <span>Generating response{dots}</span>;
+  return <span>{text}{dots}</span>;
 }
 
 function InputFormBlock({
@@ -91,6 +91,7 @@ export function ChatPanel() {
   const { models, selectedModelId, setSelectedModelId, fetchModels } = useModelStore();
   const [input, setInput] = useState('');
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
+  const [statusText, setStatusText] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -103,6 +104,7 @@ export function ChatPanel() {
     setLoading(true);
     setError(null);
     setStreamingContent(null);
+    setStatusText(null);
 
     try {
       const history = [...messages, { role: 'user' as const, content: textToSend.trim() }];
@@ -133,7 +135,13 @@ export function ChatPanel() {
           try {
             const parsed = JSON.parse(data);
             switch (event) {
+              case 'status': {
+                setStreamingContent(null);
+                setStatusText(parsed.status);
+                break;
+              }
               case 'content_delta': {
+                setStatusText(null);
                 setStreamingContent(parsed.content);
                 const complete = extractMermaidBlocks(parsed.content);
                 if (complete) {
@@ -178,9 +186,11 @@ export function ChatPanel() {
       }
     } catch (e) {
       setStreamingContent(null);
+      setStatusText(null);
       setError((e as Error).message);
     } finally {
       setStreamingContent(null);
+      setStatusText(null);
       setLoading(false);
     }
   };
@@ -292,7 +302,7 @@ export function ChatPanel() {
               </div>
             ) : (
               <div className="p-3 rounded-lg text-sm text-[#666666] ml-8 flex items-center gap-1">
-                <GeneratingDots />
+                <AnimatedDots text={statusText ?? 'Generating response'} />
               </div>
             )}
           </div>

@@ -59,6 +59,7 @@ export async function routeSections(
   apiKey: string
 ): Promise<SectionId[]> {
   const userMessage = buildRouterUserMessage(messages);
+  console.log(`[ROUTER ${new Date().toISOString()}] routeSections called`, { provider, userMessageLength: userMessage.length });
 
   try {
     if (provider === 'openai') {
@@ -77,17 +78,18 @@ export async function routeSections(
     } else {
       const anthropic = new Anthropic({ apiKey });
       const response = await anthropic.messages.create({
-        model: 'claude-3-5-haiku-20241022',
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 200,
+        system: [{ type: 'text', text: ROUTER_PROMPT, cache_control: { type: 'ephemeral' } }],
         messages: [
-          { role: 'user', content: `${ROUTER_PROMPT}\n\n${userMessage}` },
+          { role: 'user', content: userMessage },
         ],
       });
       const text = response.content[0]?.type === 'text' ? response.content[0].text : '[]';
       return parseRouterResponse(text);
     }
-  } catch {
-    // On any router error, fall back to all sections
+  } catch (err) {
+    console.error(`[ROUTER ${new Date().toISOString()}] ERROR`, (err as Error).message);
     return ALL_SECTIONS;
   }
 }

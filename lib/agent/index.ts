@@ -6,6 +6,15 @@ import * as path from 'path';
 import { buildSystemPrompt } from './prompts';
 import { routeSections } from './router';
 
+function log(label: string, data?: unknown) {
+  const ts = new Date().toISOString();
+  if (data !== undefined) {
+    console.log(`[AGENT ${ts}] ${label}`, typeof data === 'string' ? data : JSON.stringify(data, null, 2));
+  } else {
+    console.log(`[AGENT ${ts}] ${label}`);
+  }
+}
+
 export type ModelProvider = 'openai' | 'anthropic';
 export type ModelId = 'gpt-4o' | 'gpt-4o-mini' | 'claude-sonnet-4-20250514' | 'claude-3-7-sonnet-20250219';
 
@@ -57,6 +66,15 @@ export interface AgentResponse {
 
 /** Maximum characters for a tool result before truncation. */
 const MAX_TOOL_RESULT_CHARS = 3000;
+
+/** Maximum number of recent messages to keep to stay within token limits. */
+const MAX_HISTORY_MESSAGES = 10;
+
+/** Trim conversation history to the most recent messages. */
+function trimHistory<T>(messages: T[]): T[] {
+  if (messages.length <= MAX_HISTORY_MESSAGES) return messages;
+  return messages.slice(-MAX_HISTORY_MESSAGES);
+}
 
 function truncateResult(result: unknown): string {
   const str = JSON.stringify(result);
@@ -203,9 +221,11 @@ export async function createAgent(
   workspacePath: string,
   onContentDelta?: (content: string) => void,
   onDiagramUpdate?: (mermaid: string, relatedPaths?: string[]) => void,
-  modelId: ModelId = 'gpt-4o'
+  modelId: ModelId = 'gpt-4o',
+  onStatus?: (status: string) => void
 ) {
   const modelOption = AVAILABLE_MODELS.find((m) => m.id === modelId) ?? AVAILABLE_MODELS[0];
+  log('createAgent', { modelId: modelOption.id, provider: modelOption.provider, apiKeyLength: apiKey?.length });
   const openai = modelOption.provider === 'openai' ? new OpenAI({ apiKey }) : null;
   const anthropic = modelOption.provider === 'anthropic' ? new Anthropic({ apiKey }) : null;
 
@@ -238,12 +258,15 @@ export async function createAgent(
   }
 
   async function executeTool(name: string, args: Record<string, unknown>): Promise<ToolCallResult> {
+    log(`executeTool called: ${name}`, Object.keys(args));
     if (name === 'read_file') {
+      onStatus?.('Reading file...');
       const p = pathSafe(workspacePath, (args.path as string) || '.');
       const content = await fs.readFile(p, 'utf-8');
       return { tool: name, result: content };
     }
     if (name === 'write_file') {
+      onStatus?.('Writing file...');
       const p = pathSafe(workspacePath, args.path as string);
       await fs.mkdir(path.dirname(p), { recursive: true });
       await fs.writeFile(p, args.content as string);
@@ -276,6 +299,7 @@ export async function createAgent(
     if (name === 'web_search') {
       const query = String(args.query ?? '').trim();
       if (!query) return { tool: name, result: { error: 'Empty query' } };
+      onStatus?.('Searching the web...');
       const tavilyApiKey = process.env.TAVILY_API_KEY;
       if (!tavilyApiKey) return { tool: name, result: { error: 'TAVILY_API_KEY not configured' } };
       const tvly = tavily({ apiKey: tavilyApiKey });
@@ -290,17 +314,19 @@ export async function createAgent(
     return { tool: name, result: { error: 'Unknown tool' } };
   }
 
-  // --- Anthropic tool definitions ---
-  const ANTHROPIC_TOOLS: Anthropic.Tool[] = OPENAI_TOOLS
+  // --- Anthropic tool definitions (with cache_control on last tool) ---
+  const ANTHROPIC_TOOLS = OPENAI_TOOLS
     .filter((t): t is OpenAI.Chat.Completions.ChatCompletionTool & { type: 'function'; function: { name: string; description?: string; parameters?: Record<string, unknown> } } => t.type === 'function')
-    .map((t) => ({
+    .map((t, i, arr) => ({
       name: t.function.name,
       description: t.function.description ?? '',
       input_schema: (t.function.parameters ?? { type: 'object', properties: {} }) as Anthropic.Tool.InputSchema,
+      ...(i === arr.length - 1 ? { cache_control: { type: 'ephemeral' as const } } : {}),
     }));
 
   // --- OpenAI runner ---
   async function runOpenAI(messages: AgentMessage[]): Promise<AgentResponse> {
+    onStatus?.('Analyzing request...');
     const selectedSections = await routeSections(messages, 'openai', apiKey);
     const systemPrompt = await buildSystemPrompt(workspacePath, selectedSections);
     let lastContent = '';
@@ -308,7 +334,7 @@ export async function createAgent(
 
     const openaiMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
-      ...messages.map((m) => ({ role: m.role, content: m.content })),
+      ...trimHistory(messages).map((m) => ({ role: m.role, content: m.content })),
     ];
 
     let iterations = 0;
@@ -364,6 +390,7 @@ export async function createAgent(
         });
       }
 
+      onStatus?.('Generating response...');
       stream = await openai!.chat.completions.create({
         model: modelOption.id,
         max_tokens: 16384,
@@ -380,24 +407,33 @@ export async function createAgent(
 
   // --- Anthropic runner ---
   async function runAnthropic(messages: AgentMessage[]): Promise<AgentResponse> {
+    log('runAnthropic START', { messageCount: messages.length, lastMessage: messages[messages.length - 1]?.content?.slice(0, 200) });
+    onStatus?.('Analyzing request...');
     const selectedSections = await routeSections(messages, 'anthropic', apiKey);
+    log('routeSections result', selectedSections);
     const systemPrompt = await buildSystemPrompt(workspacePath, selectedSections);
+    log('systemPrompt length', systemPrompt.length);
     let lastContent = '';
     const toolResults: ToolCallResult[] = [];
 
-    const anthropicMessages: Anthropic.MessageParam[] = messages.map((m) => ({
+    const anthropicMessages: Anthropic.MessageParam[] = trimHistory(messages).map((m) => ({
       role: m.role,
       content: m.content,
     }));
+    log('trimmed messages count', anthropicMessages.length);
 
     let iterations = 0;
     const maxIterations = 10;
 
     while (iterations <= maxIterations) {
+      if (iterations > 0) {
+        onStatus?.(`Generating response... (step ${iterations + 1})`);
+      }
+      log(`Anthropic API call iteration=${iterations}`, { messageCount: anthropicMessages.length });
       const stream = anthropic!.messages.stream({
         model: modelOption.id,
         max_tokens: 16384,
-        system: systemPrompt,
+        system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
         messages: anthropicMessages,
         tools: ANTHROPIC_TOOLS,
       });
@@ -415,13 +451,23 @@ export async function createAgent(
       }
 
       const finalMessage = await stream.finalMessage();
+      log('Anthropic finalMessage', {
+        stop_reason: finalMessage.stop_reason,
+        usage: finalMessage.usage,
+        contentBlockTypes: finalMessage.content.map((b) => b.type),
+        contentBlockCount: finalMessage.content.length,
+      });
+
       const toolUseBlocks: { id: string; name: string; input: Record<string, unknown> }[] = [];
       textContent = '';
 
       for (const block of finalMessage.content) {
         if (block.type === 'text') {
           textContent = block.text;
+          log('Anthropic text block length', textContent.length);
+          log('Anthropic text block preview', textContent.slice(0, 300));
         } else if (block.type === 'tool_use') {
+          log('Anthropic tool_use block', { name: block.name, inputKeys: Object.keys(block.input as Record<string, unknown>) });
           toolUseBlocks.push({ id: block.id, name: block.name, input: block.input as Record<string, unknown> });
         }
       }
@@ -432,13 +478,19 @@ export async function createAgent(
         onContentDelta?.(textContent);
       }
 
-      if (toolUseBlocks.length === 0 || finalMessage.stop_reason !== 'tool_use') break;
+      if (toolUseBlocks.length === 0 || finalMessage.stop_reason !== 'tool_use') {
+        log('Anthropic loop EXIT', { reason: toolUseBlocks.length === 0 ? 'no tool calls' : `stop_reason=${finalMessage.stop_reason}`, iterations, lastContentLength: lastContent.length });
+        break;
+      }
 
       anthropicMessages.push({ role: 'assistant', content: finalMessage.content });
 
       const toolResultBlocks: Anthropic.ToolResultBlockParam[] = [];
       for (const tu of toolUseBlocks) {
+        onStatus?.(`Running ${tu.name}...`);
+        log(`Executing tool: ${tu.name}`, tu.input);
         const result = await executeTool(tu.name, tu.input);
+        log(`Tool result: ${tu.name}`, truncateResult(result.result).slice(0, 500));
         toolResults.push(result);
         toolResultBlocks.push({
           type: 'tool_result',
@@ -447,11 +499,14 @@ export async function createAgent(
         });
       }
       anthropicMessages.push({ role: 'user', content: toolResultBlocks });
+      onStatus?.('Generating response...');
 
       iterations++;
     }
 
-    return extractResults(lastContent, toolResults);
+    const finalResult = extractResults(lastContent, toolResults);
+    log('runAnthropic DONE', { contentLength: finalResult.content.length, toolCallCount: finalResult.toolCalls?.length, hasSuggestedOptions: !!finalResult.suggestedOptions, hasFormFields: !!finalResult.formFields });
+    return finalResult;
   }
 
   function extractResults(lastContent: string, toolResults: ToolCallResult[]): AgentResponse {

@@ -5,6 +5,7 @@ export const maxDuration = 300;
 
 export async function POST(request: Request) {
   const { workspacePath, messages, modelId } = await request.json();
+  console.log(`[API ${new Date().toISOString()}] POST /api/agent/chat`, { modelId, messageCount: messages?.length, workspacePath });
 
   const selectedModel = AVAILABLE_MODELS.find((m) => m.id === modelId) ?? AVAILABLE_MODELS[0];
 
@@ -36,7 +37,8 @@ export async function POST(request: Request) {
           workspacePath,
           (content) => sendEvent('content_delta', { content }),
           (mermaid, relatedPaths) => sendEvent('diagram_update', { mermaid, relatedPaths: relatedPaths ?? null }),
-          (modelId as ModelId) || 'gpt-4o'
+          (modelId as ModelId) || 'gpt-4o',
+          (status) => sendEvent('status', { status })
         );
 
         const msgs = messages.map((m: { role: string; content: string }) => ({
@@ -45,6 +47,7 @@ export async function POST(request: Request) {
         }));
 
         const response = await agent.run(msgs);
+        console.log(`[API ${new Date().toISOString()}] agent.run completed`, { contentLength: response.content?.length, toolCalls: response.toolCalls?.map(t => t.tool), hasSuggestedOptions: !!response.suggestedOptions, hasFormFields: !!response.formFields });
 
         sendEvent('done', {
           content: response.content,
@@ -53,6 +56,7 @@ export async function POST(request: Request) {
           formFields: response.formFields,
         });
       } catch (err) {
+        console.error(`[API ${new Date().toISOString()}] agent.run ERROR`, (err as Error).message, (err as Error).stack);
         sendEvent('error', { error: (err as Error).message });
       } finally {
         controller.close();
