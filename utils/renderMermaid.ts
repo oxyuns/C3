@@ -25,19 +25,19 @@ function ensureInitialized() {
       themeVariables: {
         darkMode: true,
         background: '#0a0a0a',
-        primaryColor: '#1a1a1a',
-        primaryTextColor: '#ffffff',
-        primaryBorderColor: '#2a2a2a',
-        lineColor: '#3a3a3a',
-        secondaryColor: '#141414',
-        tertiaryColor: '#1a1a1a',
-        noteBkgColor: '#141414',
-        noteTextColor: '#a0a0a0',
-        noteBorderColor: '#2a2a2a',
-        edgeLabelBackground: '#141414',
-        clusterBkg: '#141414',
-        clusterBorder: '#2a2a2a',
-        titleColor: '#ffffff',
+        primaryColor: '#1e293b',
+        primaryTextColor: '#e2e8f0',
+        primaryBorderColor: '#475569',
+        lineColor: '#94a3b8',
+        secondaryColor: '#1e1e2e',
+        tertiaryColor: '#1a1a2e',
+        noteBkgColor: '#1e293b',
+        noteTextColor: '#cbd5e1',
+        noteBorderColor: '#475569',
+        edgeLabelBackground: '#1e293b',
+        clusterBkg: '#111827',
+        clusterBorder: '#475569',
+        titleColor: '#f1f5f9',
       },
     });
     initialized = true;
@@ -103,32 +103,42 @@ function cleanupMermaidDom(): void {
   document.body.querySelectorAll(':scope > [id^="dmermaid-"], :scope > [id^="mermaid-"]').forEach((el) => el.remove());
 }
 
+export interface RenderResult {
+  svg: string | null;
+  error?: string;
+}
+
 export async function renderMermaidToSvg(source: string): Promise<string | null> {
-  if (!source?.trim()) return null;
+  const result = await renderMermaidDetailed(source);
+  return result.svg;
+}
+
+export async function renderMermaidDetailed(source: string): Promise<RenderResult> {
+  if (!source?.trim()) return { svg: null };
   let normalized = normalizeMermaidSource(source.trim());
   normalized = sanitizeForMermaid11(normalized);
-  // Use a counter (not Date.now) to guarantee unique IDs across rapid concurrent calls.
   const id = `mermaid-r${++_renderCount}`;
   try {
     ensureInitialized();
     const { svg } = await mermaid.render(id, normalized);
     cleanupMermaidDom();
     const errCheck = isMermaidErrorSvg(svg);
-    if (errCheck.isError) return null;
-    return svg;
-  } catch {
+    if (errCheck.isError) return { svg: null, error: `Mermaid produced error SVG: ${errCheck.reason}` };
+    return { svg };
+  } catch (e1) {
     cleanupMermaidDom();
-    // Retry with a fresh unique ID — do NOT re-sanitize (already done above).
+    // Retry with a fresh unique ID
     try {
       ensureInitialized();
       const { svg } = await mermaid.render(`mermaid-r${++_renderCount}`, normalized);
       cleanupMermaidDom();
-      if (isMermaidErrorSvg(svg).isError) return null;
-      return svg;
+      if (isMermaidErrorSvg(svg).isError) return { svg: null, error: 'Mermaid produced error SVG on retry' };
+      return { svg };
     } catch (e2) {
       cleanupMermaidDom();
-      if (process.env.NODE_ENV === 'development') console.warn('[renderMermaid] Parse failed (may be partial):', (e2 as Error).message);
-      return null;
+      const errMsg = (e2 as Error).message || (e1 as Error).message || 'Unknown mermaid error';
+      console.error('[renderMermaid] Parse failed:', errMsg, '\nSource:\n', normalized.slice(0, 500));
+      return { svg: null, error: errMsg };
     }
   }
 }

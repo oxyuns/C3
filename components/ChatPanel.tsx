@@ -136,7 +136,6 @@ export function ChatPanel() {
             const parsed = JSON.parse(data);
             switch (event) {
               case 'status': {
-                setStreamingContent(null);
                 setStatusText(parsed.status);
                 break;
               }
@@ -289,7 +288,7 @@ export function ChatPanel() {
         )}
         {isLoading && (
           <div className="space-y-2 min-w-0">
-            {streamingContent ? (
+            {streamingContent && (
               <div
                 className="p-3 rounded-lg text-sm break-words bg-[#141414] border border-[#2a2a2a] text-white mr-8 prose prose-sm prose-dark max-w-none prose-p:my-1 prose-ul:my-2 prose-li:my-0"
               >
@@ -300,11 +299,10 @@ export function ChatPanel() {
                   {streamingContent}
                 </ReactMarkdown>
               </div>
-            ) : (
-              <div className="p-3 rounded-lg text-sm text-[#666666] ml-8 flex items-center gap-1">
-                <AnimatedDots text={statusText ?? 'Generating response'} />
-              </div>
             )}
+            <div className="p-3 rounded-lg text-sm text-[#666666] ml-8 flex items-center gap-1">
+              <AnimatedDots text={statusText ?? 'Generating response'} />
+            </div>
           </div>
         )}
       </div>

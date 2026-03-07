@@ -16,7 +16,7 @@ function log(label: string, data?: unknown) {
 }
 
 export type ModelProvider = 'openai' | 'anthropic';
-export type ModelId = 'gpt-4o' | 'gpt-4o-mini' | 'claude-sonnet-4-20250514' | 'claude-3-7-sonnet-20250219';
+export type ModelId = 'gpt-4o' | 'gpt-4o-mini' | 'claude-sonnet-4-20250514' | 'claude-sonnet-4-6';
 
 export interface ModelOption {
   id: ModelId;
@@ -28,7 +28,7 @@ export const AVAILABLE_MODELS: ModelOption[] = [
   { id: 'gpt-4o', provider: 'openai', label: 'GPT-4o' },
   { id: 'gpt-4o-mini', provider: 'openai', label: 'GPT-4o Mini' },
   { id: 'claude-sonnet-4-20250514', provider: 'anthropic', label: 'Claude Sonnet 4' },
-  { id: 'claude-3-7-sonnet-20250219', provider: 'anthropic', label: 'Claude 3.7 Sonnet' },
+  { id: 'claude-sonnet-4-6', provider: 'anthropic', label: 'Claude Sonnet 4.6' },
 ];
 
 type StreamDelta = OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta;
@@ -260,19 +260,22 @@ export async function createAgent(
   async function executeTool(name: string, args: Record<string, unknown>): Promise<ToolCallResult> {
     log(`executeTool called: ${name}`, Object.keys(args));
     if (name === 'read_file') {
-      onStatus?.('Reading file...');
-      const p = pathSafe(workspacePath, (args.path as string) || '.');
+      const filePath = (args.path as string) || '.';
+      onStatus?.(`Reading ${filePath}`);
+      const p = pathSafe(workspacePath, filePath);
       const content = await fs.readFile(p, 'utf-8');
       return { tool: name, result: content };
     }
     if (name === 'write_file') {
-      onStatus?.('Writing file...');
-      const p = pathSafe(workspacePath, args.path as string);
+      const filePath = args.path as string;
+      onStatus?.(`Writing ${filePath}`);
+      const p = pathSafe(workspacePath, filePath);
       await fs.mkdir(path.dirname(p), { recursive: true });
       await fs.writeFile(p, args.content as string);
       return { tool: name, result: { success: true } };
     }
     if (name === 'list_files') {
+      onStatus?.('Listing files...');
       const p = pathSafe(workspacePath, (args.path as string) || '.');
       const entries = await fs.readdir(p, { withFileTypes: true });
       const list = entries.map((e) => (e.isDirectory() ? `${e.name}/` : e.name));
@@ -287,6 +290,7 @@ export async function createAgent(
       return { tool: name, result: { fields } };
     }
     if (name === 'show_diagram') {
+      onStatus?.('Rendering diagram...');
       const mermaid = String(args.mermaid ?? '').trim();
       const relatedPaths = Array.isArray(args.relatedPaths)
         ? (args.relatedPaths as string[]).filter((p) => typeof p === 'string' && p.trim())
@@ -299,7 +303,7 @@ export async function createAgent(
     if (name === 'web_search') {
       const query = String(args.query ?? '').trim();
       if (!query) return { tool: name, result: { error: 'Empty query' } };
-      onStatus?.('Searching the web...');
+      onStatus?.(`Searching: "${query.slice(0, 60)}"`);
       const tavilyApiKey = process.env.TAVILY_API_KEY;
       if (!tavilyApiKey) return { tool: name, result: { error: 'TAVILY_API_KEY not configured' } };
       const tvly = tavily({ apiKey: tavilyApiKey });
@@ -390,7 +394,7 @@ export async function createAgent(
         });
       }
 
-      onStatus?.('Generating response...');
+      onStatus?.('Analyzing results...');
       stream = await openai!.chat.completions.create({
         model: modelOption.id,
         max_tokens: 16384,
@@ -426,9 +430,7 @@ export async function createAgent(
     const maxIterations = 10;
 
     while (iterations <= maxIterations) {
-      if (iterations > 0) {
-        onStatus?.(`Generating response... (step ${iterations + 1})`);
-      }
+      onStatus?.(iterations === 0 ? 'Thinking...' : 'Analyzing results...');
       log(`Anthropic API call iteration=${iterations}`, { messageCount: anthropicMessages.length });
       const stream = anthropic!.messages.stream({
         model: modelOption.id,
@@ -487,7 +489,6 @@ export async function createAgent(
 
       const toolResultBlocks: Anthropic.ToolResultBlockParam[] = [];
       for (const tu of toolUseBlocks) {
-        onStatus?.(`Running ${tu.name}...`);
         log(`Executing tool: ${tu.name}`, tu.input);
         const result = await executeTool(tu.name, tu.input);
         log(`Tool result: ${tu.name}`, truncateResult(result.result).slice(0, 500));
@@ -499,7 +500,6 @@ export async function createAgent(
         });
       }
       anthropicMessages.push({ role: 'user', content: toolResultBlocks });
-      onStatus?.('Generating response...');
 
       iterations++;
     }

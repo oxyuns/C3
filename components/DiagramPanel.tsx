@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useDiagramStore } from '@/store/diagramStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
-import { renderMermaidToSvg } from '@/utils/renderMermaid';
+import { renderMermaidDetailed } from '@/utils/renderMermaid';
 
 const MIN_SCALE = 0.1;
 const MAX_SCALE = 5;
@@ -23,13 +23,11 @@ export function DiagramPanel() {
   const translateStart = useRef({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Reset view when diagram changes
+  // Render mermaid + reset view in a single effect to avoid race conditions
   useEffect(() => {
     setScale(1);
     setTranslate({ x: 0, y: 0 });
-  }, [mermaidSource]);
 
-  useEffect(() => {
     if (!mermaidSource?.trim()) {
       setSvg(null);
       setError(null);
@@ -37,16 +35,16 @@ export function DiagramPanel() {
     }
     let cancelled = false;
     setError(null);
-    renderMermaidToSvg(mermaidSource).then((result) => {
+    renderMermaidDetailed(mermaidSource).then((result) => {
       if (cancelled) return;
-      if (result) {
-        setSvg(result);
+      if (result.svg) {
+        // Remove width="100%" so SVG uses viewBox intrinsic size inside absolute container
+        const fixed = result.svg.replace(/\bwidth="100%"/, '');
+        setSvg(fixed);
         setError(null);
       } else {
-        setSvg((prev) => {
-          if (!prev) setError('Could not render diagram');
-          return prev;
-        });
+        console.warn('[DiagramPanel] render failed:', result.error, '\nSource:', mermaidSource.slice(0, 300));
+        setError(result.error || 'Could not render diagram');
       }
     });
     return () => { cancelled = true; };
@@ -165,10 +163,12 @@ export function DiagramPanel() {
 
   const scalePercent = Math.round(scale * 100);
 
+  const [showSource, setShowSource] = useState(false);
+
   const content = svg ? (
     <div
       ref={containerRef}
-      className="flex-1 overflow-hidden relative"
+      className="flex-1 min-h-0 min-w-0 w-full overflow-hidden relative"
       style={{ cursor: isPanning ? 'grabbing' : 'grab' }}
       onWheel={handleWheel}
       onPointerDown={handlePointerDown}
@@ -177,8 +177,10 @@ export function DiagramPanel() {
       onPointerCancel={handlePointerUp}
     >
       <div
-        className="absolute origin-top-left [&_svg]:w-auto [&_svg]:h-auto"
         style={{
+          position: 'absolute',
+          width: '100%',
+          transformOrigin: 'top left',
           transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`,
           willChange: 'transform',
         }}
@@ -186,8 +188,21 @@ export function DiagramPanel() {
       />
     </div>
   ) : error ? (
-    <div className="flex-1 flex items-center justify-center text-[#a0a0a0] text-sm">
-      {error}
+    <div className="flex-1 flex flex-col items-center justify-center gap-3 p-4 text-center">
+      <div className="text-[#ff6b6b] text-sm">{error}</div>
+      {mermaidSource && (
+        <button
+          onClick={() => setShowSource((v) => !v)}
+          className="text-xs text-[#666666] hover:text-[#a0a0a0] underline"
+        >
+          {showSource ? 'Hide source' : 'Show mermaid source'}
+        </button>
+      )}
+      {showSource && mermaidSource && (
+        <pre className="text-[10px] text-[#666666] bg-[#141414] border border-[#2a2a2a] rounded p-2 max-h-60 overflow-auto w-full text-left whitespace-pre-wrap">
+          {mermaidSource}
+        </pre>
+      )}
     </div>
   ) : (
     <div className="flex-1 flex items-center justify-center text-[#666666] text-sm">
@@ -196,7 +211,7 @@ export function DiagramPanel() {
   );
 
   return (
-    <div className="h-full flex flex-col bg-[#0a0a0a]">
+    <div className="h-full w-full min-w-0 flex flex-col bg-[#0a0a0a]">
       <div className="flex items-center justify-between px-4 py-2 border-b border-[#2a2a2a] bg-[#141414]">
         <span className="text-sm text-[#a0a0a0]">Architecture diagram</span>
         <div className="flex items-center gap-1">
